@@ -4,8 +4,6 @@ import os
 
 
 class CustomRequester:
-    """Обёртка над requests.Session() для всех API-запросов"""
-
     base_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json"

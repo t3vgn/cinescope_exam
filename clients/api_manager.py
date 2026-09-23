@@ -4,7 +4,6 @@ from config.base_urls import AUTH_BASE_URL, API_BASE_URL
 
 
 class AuthApi(CustomRequester):
-    """API авторизации"""
 
     def __init__(self, session):
         super().__init__(session=session, base_url=AUTH_BASE_URL)
@@ -21,7 +20,6 @@ class AuthApi(CustomRequester):
 
 
 class MoviesApi(CustomRequester):
-    """API фильмов"""
 
     def __init__(self, session):
         super().__init__(session=session, base_url=API_BASE_URL)
@@ -54,7 +52,6 @@ class MoviesApi(CustomRequester):
 
 
 class ApiManager:
-    """Менеджер всех API-клиентов с общей сессией"""
 
     def __init__(self, session=None):
         self.session = session or requests.Session()
@@ -62,7 +59,6 @@ class ApiManager:
         self.movies = MoviesApi(self.session)
 
     def set_token(self, token: str):
-        """Добавляет токен в заголовки сессии"""
         self.session.headers.update({"Authorization": f"Bearer {token}"})
 
     def close(self):

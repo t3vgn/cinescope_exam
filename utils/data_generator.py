@@ -15,11 +15,8 @@ class DataGenerator:
 
     @staticmethod
     def generate_random_name() -> str:
-        """ФИО: только буквы (без ё/Ё) и пробелы"""
         name = faker.name()
-        # Заменяем ё → е
         name = name.replace("ё", "е").replace("Ё", "Е")
-        # Убираем всё, кроме букв и пробелов
         name = re.sub(r"[^A-Za-zА-Яа-я\s]", "", name)
         return name.strip()
 
@@ -36,7 +33,6 @@ class DataGenerator:
 
     @staticmethod
     def generate_movie_patch_data() -> dict:
-        """Данные для частичного обновления фильма"""
         return {
             "name": f"Обновлённый фильм {uuid.uuid4().hex[:8]}",
             "price": 1500,
