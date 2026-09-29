@@ -1,185 +1,491 @@
 import pytest
+import requests
+import allure
+from datetime import datetime
+from sqlalchemy.orm import Session
+import logging
 
+from models.movies_models import MoviesPage, MovieResponse, MovieCreateRequest, MoviePatchRequest
 from tests.conftest import unauthorized_api
 from utils.data_generator import DataGenerator
+from config.base_urls import API_BASE_URL
+from db_models.movies import MovieDBModel
+
+logger = logging.getLogger(__name__)
 
 
+@allure.epic("Управление фильмами")
+@allure.feature("Позитивные сценарии работы с фильмами")
 @pytest.mark.api
 class TestMoviesPositive:
 
-    def test_get_movies_list(self, api):
-        response = api.movies.get_movies()
-        assert response.status_code == 200
-        data = response.json()
-        assert "movies" in data
-        assert isinstance(data["movies"], list)
+    # SMOKE — критичные happy-path
 
-    def test_get_movies_with_filter_min_price(self, authorized_api):
-        cheap = authorized_api.movies.create_movie(
-            DataGenerator.generate_movie_payload(price=100)
-        ).json()
-        middle = authorized_api.movies.create_movie(
-            DataGenerator.generate_movie_payload(price=700)
-        ).json()
-        expensive = authorized_api.movies.create_movie(
-            DataGenerator.generate_movie_payload(price=1500)
-        ).json()
-        params = {
-            "page": 1,
-            "pageSize": 20,
-            "minPrice": 500,
-            "maxPrice": 1000,
-            "createdAt": "desc",
-        }
-        response = authorized_api.movies.get_movies(params=params)
-        assert response.status_code == 200
+    @allure.story("Получение списка фильмов")
+    @allure.title("Получение списка фильмов под SUPER_ADMIN")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.smoke
+    def test_get_movies_list(self, super_admin):
+        with allure.step("Отправляем GET /movies под SUPER_ADMIN"):
+            response = super_admin.api.movies.get_movies()
 
-        movies = response.json()["movies"]
-        assert movies, "Список фильмов пустой"
+        with allure.step("Проверяем статус 200"):
+            assert response.status_code == 200
 
-        ids = [movie["id"] for movie in movies]
-        assert middle["id"] in ids, "Фильм за 700₽ должен попасть в фильтр"
-        assert cheap["id"] not in ids, "Фильм за 100₽ не должен попасть"
-        assert expensive["id"] not in ids, "Фильм за 1500₽ не должен попасть"
+        with allure.step("Валидируем ответ через MoviesPage (проверка контракта)"):
+            page = MoviesPage.model_validate(response.json())
 
-        for movie in movies:
-            assert 500 <= movie["price"] <= 1000
+        with allure.step("Проверяем, что список фильмов непустой"):
+            assert page.movies, "Список фильмов пустой"
+            assert page.page_count >= len(page.movies), "count не может быть меньше размера страницы"
 
-        for m in [cheap, middle, expensive]:
-            authorized_api.movies.delete_movie(m["id"])
-
-    def test_get_movies_with_filter_location(self, authorized_api):
-        msk_movie = authorized_api.movies.create_movie(
-            DataGenerator.generate_movie_payload(location="MSK")
-        ).json()
-        spb_movie = authorized_api.movies.create_movie(
-            DataGenerator.generate_movie_payload(location="SPB")
-        ).json()
-
-
-        params = {
-            "page": 1,
-            "pageSize": 20,
-            "locations": ["MSK"],
-            "createdAt": "desc",
-        }
-        response = authorized_api.movies.get_movies(params=params)
-        assert response.status_code == 200
-
-        movies = response.json()["movies"]
-        assert movies, "Список фильмов пустой"
-
-        ids = [movie["id"] for movie in movies]
-
-
-        assert msk_movie["id"] in ids, "Фильм MSK должен быть в ответе"
-        assert spb_movie["id"] not in ids, "Фильм SPB не должен быть в ответе"
-
-
-        for movie in movies:
-            assert movie["location"] == "MSK"
-
-
-        authorized_api.movies.delete_movie(msk_movie["id"])
-        authorized_api.movies.delete_movie(spb_movie["id"])
-
+    @allure.story("Получение фильма по ID")
+    @allure.title("Получение фильма по ID через API")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.smoke
     def test_get_movie_by_id(self, authorized_api, created_movie):
-        response = authorized_api.movies.get_movie_by_id(created_movie["id"])
-        assert response.status_code == 200
-        assert response.json()["id"] == created_movie["id"]
+        with allure.step(f"Запрашиваем фильм id={created_movie['id']}"):
+            response = authorized_api.movies.get_movie_by_id(created_movie["id"])
 
-    def test_create_movie(self, authorized_api):
+        with allure.step("Проверяем статус"):
+            assert response.status_code == 200
 
-        movie_data = DataGenerator.generate_movie_payload()
-        response = authorized_api.movies.create_movie(movie_data)
+        with allure.step("Валидируем ответ через MovieResponse"):
+            movie = MovieResponse.model_validate(response.json())
 
-        assert response.status_code == 201
-        body = response.json()
-        assert body["name"] == movie_data["name"]
+        with allure.step("Проверяем, что id совпадает"):
+            assert movie.id == created_movie["id"]
 
-        movie_id = body["id"]
-        get_response = authorized_api.movies.get_movie_by_id(movie_id)
-        assert get_response.status_code == 200
+    @allure.story("Создание фильма")
+    @allure.title("Создание фильма через API и проверка полей")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.smoke
+    def test_create_movie(self, super_admin):
+        with allure.step("Генерируем payload фильма и валидируем через MovieCreateRequest"):
+            movie_data = DataGenerator.generate_movie_payload()
+            payload = MovieCreateRequest.model_validate(movie_data)
 
-        actual = get_response.json()
-        assert actual["name"] == movie_data["name"], \
-            "Имя не совпадает после создания"
-        assert actual["price"] == movie_data["price"], \
-            "Цена не совпадает после создания"
-        assert actual["location"] == movie_data["location"], \
-            "Локация не совпадает после создания"
+        with allure.step("Создаём фильм через POST /movies"):
+            response = super_admin.api.movies.create_movie(payload.model_dump(mode="json", by_alias=True, exclude_none=True))
 
-        # Cleanup
-        authorized_api.movies.delete_movie(movie_id)
+        with allure.step("Проверяем статус 201 и валидируем ответ"):
+            assert response.status_code == 201
+            created = MovieResponse.model_validate(response.json())
+            assert created.name == payload.name
 
+        with allure.step("Получаем фильм через GET и сверяем поля"):
+            get_response = super_admin.api.movies.get_movie_by_id(created.id)
+            assert get_response.status_code == 200
+
+            actual = MovieResponse.model_validate(get_response.json())
+            assert actual.name == payload.name, "Имя не совпадает"
+            assert actual.price == payload.price, "Цена не совпадает"
+            assert actual.location == payload.location, "Локация не совпадает"
+
+        with allure.step("Cleanup: удаляем созданный фильм"):
+            super_admin.api.movies.delete_movie(created.id)
+
+    @allure.story("Удаление фильма")
+    @allure.title("Удаление фильма через API с проверкой в БД")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.smoke
+    def test_delete_movie(self, api, super_admin_token, db_session: Session):
+        movie_id = 110
+
+        with allure.step(f"Проверяем, есть ли фильм id={movie_id} в БД"):
+            existing = (db_session.query(MovieDBModel).filter(MovieDBModel.id == movie_id).first())
+
+        if existing is None:
+            with allure.step("Фильма нет — создаём в БД"):
+                db_session.add(MovieDBModel(
+                    id=movie_id,
+                    name="Movie for delete test",
+                    description="Test description",
+                    price=100,
+                    image_url="https://example.com/poster.jpg",
+                    location="SPB",
+                    published=True,
+                    rating=5.0,
+                    genre_id=5,
+                    created_at=datetime.now(),
+                ))
+                db_session.commit()
+
+        with allure.step("Контрольная проверка: фильм точно в БД"):
+            db_session.expire_all()
+            assert (db_session.query(MovieDBModel).filter(MovieDBModel.id == movie_id).first()is not None)
+
+        with allure.step(f"Удаляем фильм id={movie_id} через API"):
+            api.set_token(super_admin_token)
+            response = api.movies.delete_movie(movie_id)
+
+        with allure.step("Проверяем статус 200"):
+            assert response.status_code == 200
+
+        with allure.step("Проверяем, что фильма нет в БД"):
+            db_session.expire_all()
+            assert (
+                db_session.query(MovieDBModel).filter(MovieDBModel.id == movie_id).first()is None)
+
+    # REGRESSION — фильтры и PATCH
+
+    @allure.story("Фильтрация фильмов")
+    @allure.title("Фильтрация фильмов по диапазону цен 500–1000")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.regression
+    def test_get_movies_with_filter_min_price(self, authorized_api):
+        with allure.step("Создаём фильмы 100₽ / 700₽ / 1500₽"):
+            cheap = MovieResponse.model_validate(authorized_api.movies.create_movie(
+                DataGenerator.generate_movie_payload(price=100)
+            ).json())
+            middle = MovieResponse.model_validate(authorized_api.movies.create_movie(
+                DataGenerator.generate_movie_payload(price=700)
+            ).json())
+            expensive = MovieResponse.model_validate(authorized_api.movies.create_movie(
+                DataGenerator.generate_movie_payload(price=1500)
+            ).json())
+
+        with allure.step("Запрашиваем фильмы с minPrice=500, maxPrice=1000"):
+            params = {
+                "page": 1, "pageSize": 20,
+                "minPrice": 500, "maxPrice": 1000,
+                "createdAt": "desc",
+            }
+            response = authorized_api.movies.get_movies(params=params)
+
+        with allure.step("Проверяем статус и валидируем MoviesPage"):
+            assert response.status_code == 200
+            page = MoviesPage.model_validate(response.json())
+            assert page.movies, "Список пустой"
+
+        with allure.step("Проверяем, что попал только фильм за 700₽"):
+            ids = [m.id for m in page.movies]
+            assert middle.id in ids
+            assert cheap.id not in ids
+            assert expensive.id not in ids
+
+        with allure.step("Все цены в диапазоне"):
+            for movie in page.movies:
+                assert 500 <= movie.price <= 1000
+
+        with allure.step("Cleanup: удаляем фильмы"):
+            for m in [cheap, middle, expensive]:
+                authorized_api.movies.delete_movie(m.id)
+
+    @allure.story("Фильтрация фильмов")
+    @allure.title("Фильтрация фильмов по локации MSK")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.regression
+    def test_get_movies_with_filter_location(self, authorized_api):
+        with allure.step("Создаём MSK и SPB фильмы"):
+            msk_movie = MovieResponse.model_validate(authorized_api.movies.create_movie(
+                DataGenerator.generate_movie_payload(location="MSK")
+            ).json())
+            spb_movie = MovieResponse.model_validate(authorized_api.movies.create_movie(
+                DataGenerator.generate_movie_payload(location="SPB")
+            ).json())
+
+        with allure.step("Запрашиваем фильмы с locations=['MSK']"):
+            params = {
+                "page": 1, "pageSize": 20,
+                "locations": ["MSK"], "createdAt": "desc",
+            }
+            response = authorized_api.movies.get_movies(params=params)
+
+        with allure.step("Проверяем ответ и валидируем MoviesPage"):
+            assert response.status_code == 200
+            page = MoviesPage.model_validate(response.json())
+            assert page.movies
+            ids = [m.id for m in page.movies]
+            assert msk_movie.id in ids
+            assert spb_movie.id not in ids
+
+        with allure.step("У всех фильмов location == 'MSK'"):
+            for movie in page.movies:
+                assert movie.location == "MSK"
+
+        with allure.step("Cleanup"):
+            authorized_api.movies.delete_movie(msk_movie.id)
+            authorized_api.movies.delete_movie(spb_movie.id)
+
+    @allure.story("Изменение фильма")
+    @allure.title("Частичное обновление фильма через PATCH")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
     def test_patch_movie(self, authorized_api, created_movie):
-        patch_data = DataGenerator.generate_movie_patch_data()
-        response = authorized_api.movies.patch_movie(
-            created_movie["id"], patch_data
-        )
+        with allure.step("Генерируем данные для PATCH и валидируем"):
+            patch_data = DataGenerator.generate_movie_patch_data()
+            payload = MoviePatchRequest.model_validate(patch_data)
 
-        assert response.status_code == 200
-        assert response.json()["name"] == patch_data["name"]
+        with allure.step("Отправляем PATCH"):
+            response = authorized_api.movies.patch_movie(
+                created_movie["id"],
+                payload.model_dump(mode="json", by_alias=True, exclude_none=True),
+            )
 
-        get_response = authorized_api.movies.get_movie_by_id(created_movie["id"])
-        assert get_response.status_code == 200
+        with allure.step("Проверяем статус 200 и валидируем ответ"):
+            assert response.status_code == 200
+            patched = MovieResponse.model_validate(response.json())
+            assert patched.name == payload.name
 
-        actual = get_response.json()
-        assert actual["name"] == patch_data["name"], \
-            "Имя не сохранилось после PATCH"
-        assert actual["price"] == patch_data["price"], \
-            "Цена не сохранилась после PATCH"
+        with allure.step("Проверяем сохранение через GET"):
+            get_response = authorized_api.movies.get_movie_by_id(created_movie["id"])
+            assert get_response.status_code == 200
+            actual = MovieResponse.model_validate(get_response.json())
+            assert actual.name == payload.name
+            assert actual.price == payload.price
 
-    def test_delete_movie(self, authorized_api):
-        movie_data = DataGenerator.generate_movie_payload()
-        created = authorized_api.movies.create_movie(movie_data).json()
+    @allure.story("Фильтрация фильмов")
+    @allure.title("Параметризованный фильтр по цене")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
+    @pytest.mark.parametrize("min_price, max_price", [
+        (1, 100), (100, 500), (500, 1000), (1, 1000),
+    ])
+    def test_filter_by_price_range(self, api, min_price, max_price):
+        with allure.step(f"Запрос с [{min_price}, {max_price}]"):
+            params = {
+                "page": 1, "pageSize": 10,
+                "minPrice": min_price, "maxPrice": max_price,
+            }
+            response = api.movies.get_movies(params=params)
 
-        response = authorized_api.movies.delete_movie(created["id"])
-        assert response.status_code == 200
+        with allure.step("Проверяем статус и валидируем MoviesPage"):
+            assert response.status_code == 200
+            page = MoviesPage.model_validate(response.json())
+            assert len(page.movies) > 0
 
-        authorized_api.movies.send_request(
-            "GET", f"/movies/{created['id']}", expected_status=404
-        )
+        with allure.step("Все цены в диапазоне"):
+            for movie in page.movies:
+                assert min_price <= movie.price <= max_price, (
+                    f"Фильм '{movie.name}' имеет цену {movie.price}, "
+                    f"что не входит в диапазон [{min_price}, {max_price}]"
+                )
+
+    @allure.story("Фильтрация фильмов")
+    @allure.title("Параметризованный фильтр по локации")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
+    @pytest.mark.parametrize("location", ["MSK", "SPB"])
+    def test_filter_by_location(self, api, location):
+        with allure.step(f"Запрос locations=['{location}']"):
+            params = {"page": 1, "pageSize": 10, "locations": [location]}
+            response = api.movies.get_movies(params=params)
+
+        with allure.step("Проверяем статус и валидируем MoviesPage"):
+            assert response.status_code == 200
+            page = MoviesPage.model_validate(response.json())
+            assert len(page.movies) > 0
+
+        with allure.step("Все фильмы в нужной локации"):
+            for movie in page.movies:
+                assert movie.location == location, (
+                    f"Фильм '{movie.name}' в локации {movie.location}, "
+                    f"а ожидали {location}"
+                )
+
+    @allure.story("Фильтрация фильмов")
+    @allure.title("Параметризованный фильтр по жанру")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
+    @pytest.mark.parametrize("genre_id", [5, 7, 8, 9])
+    def test_filter_by_genre(self, api, genre_id):
+        with allure.step(f"Запрос genreId={genre_id}"):
+            params = {"page": 1, "pageSize": 10, "genreId": genre_id}
+            response = api.movies.get_movies(params=params)
+
+        with allure.step("Проверяем статус и валидируем MoviesPage"):
+            assert response.status_code == 200
+            page = MoviesPage.model_validate(response.json())
+            assert len(page.movies) > 0
+
+        with allure.step("Все фильмы нужного жанра"):
+            for movie in page.movies:
+                assert movie.genre_id == genre_id, (
+                    f"Фильм '{movie.name}' имеет genreId={movie.genre_id}, "
+                    f"а ожидали {genre_id}"
+                )
+
+    @allure.story("Фильтрация фильмов")
+    @allure.title("Комбинированный фильтр: локация + цена")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
+    @pytest.mark.parametrize("location, min_price, max_price", [
+        ("MSK", 1, 500),
+        ("SPB", 100, 1000),
+    ])
+    def test_filter_by_multiple_params(self, api, location, min_price, max_price):
+        with allure.step(f"Запрос: {location}, [{min_price}, {max_price}]"):
+            params = {
+                "page": 1, "pageSize": 10,
+                "locations": [location],
+                "minPrice": min_price, "maxPrice": max_price,
+            }
+            response = api.movies.get_movies(params=params)
+
+        with allure.step("Проверяем статус и валидируем MoviesPage"):
+            assert response.status_code == 200
+            page = MoviesPage.model_validate(response.json())
+            assert len(page.movies) > 0
+
+        with allure.step("Оба условия выполнены"):
+            for movie in page.movies:
+                assert movie.location == location
+                assert min_price <= movie.price <= max_price
 
 
+# НЕГАТИВНЫЕ ТЕСТЫ
+
+@allure.epic("Управление фильмами")
+@allure.feature("Негативные сценарии работы с фильмами")
 @pytest.mark.api
 class TestMoviesNegative:
 
-    def test_get_movie_by_nonexistent_id(self, api):
-        api.movies.send_request(
-            "GET", "/movies/99999999", expected_status=404
-        )
-
+    @allure.story("Создание фильма без авторизации")
+    @allure.title("Создание фильма без токена → 401")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.smoke
     def test_create_movie_without_auth(self, unauthorized_api):
-        movie_data = DataGenerator.generate_movie_payload()
-        response = unauthorized_api.movies.send_request(
-            "POST", "/movies", data=movie_data, expected_status=401
-        )
-        assert response.status_code == 401
+        with allure.step("Генерируем валидный payload"):
+            movie_data = DataGenerator.generate_movie_payload()
 
-    def test_create_movie_without_required_field(self, authorized_api):
-        invalid_data = {
-            "price": 500,
-            "description": "No name",
-            "location": "MSK",
-            "published": True,
-            "genreId": 1,
-            "imageUrl": "https://example.com/img.png",
-        }
-        authorized_api.movies.send_request(
-            "POST", "/movies", data=invalid_data, expected_status=400
-        )
+        with allure.step("Отправляем POST без токена"):
+            response = unauthorized_api.movies.send_request(
+                "POST", "/movies", data=movie_data, expected_status=401
+            )
 
+        with allure.step("Проверяем статус 401"):
+            assert response.status_code == 401
+
+    @allure.story("Удаление фильма без авторизации")
+    @allure.title("Удаление фильма без токена → 401")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.smoke
     def test_delete_movie_without_auth(self, api, unauthorized_api, created_movie):
-        response = unauthorized_api.movies.send_request(
-            "DELETE", f"/movies/{created_movie['id']}",
-            expected_status=401
-        )
-        assert response.status_code == 401
+        with allure.step("DELETE без токена"):
+            response = unauthorized_api.movies.send_request(
+                "DELETE", f"/movies/{created_movie['id']}",
+                expected_status=401,
+            )
 
+        with allure.step("Проверяем статус 401"):
+            assert response.status_code == 401
+
+    @allure.story("Получение фильма по ID")
+    @allure.title("Получение несуществующего фильма → 404")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
+    def test_get_movie_by_nonexistent_id(self, api):
+        with allure.step("GET /movies/99999999, ожидаем 404"):
+            api.movies.send_request(
+                "GET", "/movies/99999999", expected_status=404
+            )
+
+    @allure.story("Создание фильма без обязательного поля")
+    @allure.title("Создание фильма без 'name' → 400")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
+    def test_create_movie_without_required_field(self, authorized_api):
+        with allure.step("Payload без 'name'"):
+            invalid_data = {
+                "price": 500,
+                "description": "No name",
+                "location": "MSK",
+                "published": True,
+                "genreId": 1,
+                "imageUrl": "https://example.com/img.png",
+            }
+
+        with allure.step("POST /movies, ожидаем 400"):
+            authorized_api.movies.send_request(
+                "POST", "/movies", data=invalid_data, expected_status=400
+            )
+
+    @allure.story("Изменение несуществующего фильма")
+    @allure.title("PATCH несуществующего фильма → 404")
+    @allure.severity(allure.severity_level.NORMAL)
+    @pytest.mark.regression
     def test_patch_nonexistent_movie(self, authorized_api):
-        patch_data = DataGenerator.generate_movie_patch_data()
-        authorized_api.movies.send_request(
-            "PATCH", "/movies/99999999",
-            data=patch_data, expected_status=404
-        )
+        with allure.step("Генерируем payload"):
+            patch_data = DataGenerator.generate_movie_patch_data()
+
+        with allure.step("PATCH /movies/99999999, ожидаем 404"):
+            authorized_api.movies.send_request(
+                "PATCH", "/movies/99999999",
+                data=patch_data, expected_status=404,
+            )
+
+    @allure.story("Создание фильма обычным пользователем")
+    @allure.title("Создание фильма под USER → 403")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.regression
+    def test_create_movie_by_common_user(self, common_user):
+        with allure.step("POST /movies под USER"):
+            response = common_user.api.movies.send_request(
+                "POST", "/movies",
+                data=DataGenerator.generate_movie_payload(),
+                expected_status=403,
+            )
+
+        with allure.step("Проверяем статус 403"):
+            assert response.status_code == 403
+
+
+# РОЛЕВАЯ МОДЕЛЬ
+
+@allure.epic("Управление фильмами")
+@allure.feature("Ролевая модель доступа")
+@pytest.mark.api
+class TestMoviesDeleteRoles:
+    """Тесты удаления фильмов с ролевой моделью."""
+
+    @allure.story("Права на удаление фильма по ролям")
+    @allure.title("Удаление фильма под разными ролями")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.regression
+    @pytest.mark.parametrize("role, expected_status", [
+        ("SUPER_ADMIN", 200),
+        ("ADMIN", 403),
+        ("USER", 403),
+    ])
+    def test_delete_movie_by_role(
+        self, api, user_with_role, role, expected_status
+    ):
+        with allure.step("Создаём фильм под SUPER_ADMIN"):
+            super_admin_token = user_with_role("SUPER_ADMIN")
+            api.set_token(super_admin_token)
+            movie_data = DataGenerator.generate_movie_payload()
+            create_response = api.movies.create_movie(movie_data)
+            assert create_response.status_code == 201
+            movie_id = create_response.json()["id"]
+
+        with allure.step(f"Меняем токен на роль {role}"):
+            api.session.headers.pop("Authorization", None)
+            token = user_with_role(role)
+            api.set_token(token)
+
+        with allure.step(f"DELETE под ролью {role}"):
+            delete_response = api.movies.send_request(
+                "DELETE", f"/movies/{movie_id}",
+                expected_status=expected_status,
+            )
+
+        with allure.step(f"Проверяем статус {expected_status}"):
+            assert delete_response.status_code == expected_status
+
+        if expected_status == 200:
+            with allure.step("Фильм удалён — проверяем 404"):
+                get_response = requests.get(f"{API_BASE_URL}/movies/{movie_id}")
+                assert get_response.status_code == 404
+        else:
+            with allure.step(f"Роль {role} — фильм на месте"):
+                get_response = requests.get(f"{API_BASE_URL}/movies/{movie_id}")
+                assert get_response.status_code == 200
+
+        with allure.step("Cleanup: удаляем под SUPER_ADMIN"):
+            api.session.headers.pop("Authorization", None)
+            api.set_token(super_admin_token)
+            try:
+                api.movies.delete_movie(movie_id)
+            except Exception as e:
+                logger.warning(f"Cleanup не удался для movie_id={movie_id}: {e}")

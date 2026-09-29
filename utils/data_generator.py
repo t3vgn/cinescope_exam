@@ -3,6 +3,8 @@ import re
 import uuid
 import requests
 from faker import Faker
+import datetime
+import random
 
 faker = Faker("ru_RU")
 
@@ -66,3 +68,25 @@ class DataGenerator:
             "published": published,
             "genreId": genre_id,
         }
+
+    @staticmethod
+    def generate_user_data() -> dict:
+        from uuid import uuid4
+
+        return {
+            'id': f'{uuid4()}',  # генерируем UUID как строку
+            'email': DataGenerator.generate_random_email(),
+            'full_name': DataGenerator.generate_random_name(),
+            'password': DataGenerator.generate_random_password(),
+            'created_at': datetime.datetime.now(),
+            'updated_at': datetime.datetime.now(),
+            'verified': False,
+            'banned': False,
+            'roles': '{USER}'
+        }
+
+    @staticmethod
+    def generate_random_int(length: int = 10) -> int:
+        low = 10 ** (length - 1)
+        high = 10 ** length - 1
+        return random.randint(low, high)
