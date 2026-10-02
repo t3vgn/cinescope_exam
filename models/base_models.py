@@ -5,7 +5,7 @@ from constants.roles import Roles
 
 
 EMAIL_PATTERN = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
-class TestUser(BaseModel):
+class UserData(BaseModel):
     email: str = Field(..., pattern=EMAIL_PATTERN, description="Email пользователя")
     fullName: str = Field(..., min_length=1, max_length=100)
     password: str = Field(..., min_length=8, max_length=20)
@@ -28,6 +28,5 @@ class RegisterUserResponse(BaseModel):
     fullName: str = Field(..., min_length=1, max_length=100)
     verified: bool
     roles: list[Roles]
-    verified: bool
     banned: bool
     createdAt: datetime

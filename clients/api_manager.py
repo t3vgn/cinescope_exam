@@ -96,3 +96,19 @@ class UserApi(CustomRequester):
             data=user_data,
             expected_status=expected_status
         )
+
+    def get_user_by_email(self, email: str):
+        return self.send_request(
+            "GET",
+            "/user",
+            params={"email": email},
+            expected_status=200,
+        )
+
+    def patch_user(self, user_id: str, data: dict):
+        return self.send_request(
+            "PATCH",
+            f"/user/{user_id}",
+            data=data,
+            expected_status=200,
+        )

@@ -16,5 +16,4 @@ class Settings:
             raise ValueError("ADMIN_PASSWORD не задан в .env")
 
 
-# Проверяем при импорте
 Settings.validate()

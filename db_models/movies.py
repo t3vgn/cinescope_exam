@@ -11,13 +11,13 @@ class MovieDBModel(Base):
 
     id = Column(String, primary_key=True)
     name = Column(String)
-    price = Column(Float)
+    price = Column(Integer)
     description = Column(String)
     image_url = Column(String)
     location = Column(String)
     published = Column(Boolean)
     rating = Column(Float)
-    genre_id = Column(String)
+    genre_id = Column(Integer)
     created_at = Column(DateTime)
 
     def to_dict(self) -> Dict[str, Any]:

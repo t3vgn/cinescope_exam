@@ -1,4 +1,4 @@
-from models.base_models import TestUser
+from models.base_models import UserData
 from models.base_models import RegisterUserResponse
 import logging
 import pytest
@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from constants.roles import Roles
 
 logger = logging.getLogger(__name__)
-class TestUserModel:
+class UserDataModel:
 
     def test_create_user(self, super_admin, creation_user_data):
         response = super_admin.api.user_api.create_user(creation_user_data)
@@ -35,7 +35,7 @@ class TestUserModel:
 
 
     def test_create_user_model(self, creation_user_data):
-        user:TestUser = creation_user_data
+        user:UserData = creation_user_data
 
         logger.info(f"✅ Модель создана: {user}")
         logger.info(f"📦 Поля: {user.model_dump()}")
@@ -49,7 +49,7 @@ class TestUserModel:
 
     def test_user_model_rejects_invalid_email(self):
         with pytest.raises(ValidationError) as exc_info:
-            TestUser(
+            UserData(
                 email="не-почта",
                 fullName="Иван",
                 password="12345678",

@@ -6,6 +6,8 @@ from faker import Faker
 import datetime
 import random
 
+from config.base_urls import API_BASE_URL
+
 faker = Faker("ru_RU")
 
 
@@ -28,9 +30,8 @@ class DataGenerator:
 
     @staticmethod
     def get_valid_genre_id() -> int:
-        response = requests.get(
-            "https://api.dev-cinescope.coconutqa.ru/genres"
-        )
+        response = requests.get(f"{API_BASE_URL}/genres")
+        response.raise_for_status()
         return response.json()[0]["id"]
 
     @staticmethod

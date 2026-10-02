@@ -26,10 +26,10 @@ class CustomRequester:
             return None
 
         if isinstance(body, BaseModel):
-            return body.model_dump(mode="json", exclude_none=True)
+            return body.model_dump(mode="json", by_alias=True, exclude_none=True)
 
         if isinstance(body, list) and body and isinstance(body[0], BaseModel):
-            return [item.model_dump(mode="json", exclude_none=True) for item in body]
+            return [item.model_dump(mode="json", by_alias=True, exclude_none=True) for item in body]
 
         # dict, list[dict], прочее — оставляем как есть
         return body

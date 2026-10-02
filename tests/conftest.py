@@ -1,19 +1,19 @@
 import pytest
+import allure
 import requests
 import time
+import logging
 from clients.api_manager import ApiManager
 from config.settings import Settings
 from entities.user import User
-from utils.data_generator import DataGenerator
 from constants.roles import Roles
-from data.auth.register_data import get_register_payload
-from models.base_models import TestUser
-
-from sqlalchemy.orm import Session
-from resources.db_client import get_db_session
+from models.base_models import UserData
+from db_requester.db_client import get_db_session
 from utils.db_helpers import DBHelper
+from models.movies_models import MovieResponse
+from utils.data_generator import DataGenerator
 
-
+logger = logging.getLogger(__name__)
 @pytest.fixture(scope="session")
 def session():
     return requests.Session()
@@ -91,10 +91,10 @@ def super_admin(user_session):
     return super_admin
 
 @pytest.fixture(scope="function")
-def test_user() -> TestUser:
+def test_user() -> UserData:
     random_password = DataGenerator.generate_random_password()
     """Базовые данные пользователя"""
-    return TestUser(
+    return UserData(
         email = DataGenerator.generate_random_email(),
         fullName = DataGenerator.generate_random_name(),
         password = random_password,
@@ -103,7 +103,7 @@ def test_user() -> TestUser:
     )
 
 @pytest.fixture(scope="function")
-def creation_user_data(test_user: TestUser) -> TestUser:
+def creation_user_data(test_user: UserData) -> UserData:
     return test_user.model_copy(update={"verified": True, "banned": False})
 
 
@@ -150,36 +150,75 @@ def admin_user(user_session, super_admin):
 
 
 @pytest.fixture(scope="function")
-def user_with_role(api):
+def user_with_role(api, super_admin):
+    """
+    Фабрика: создаёт пользователя, меняет ему роль через PATCH /user/{id}
+    под супер-админом, возвращает токен и роли из ответа логина.
+    """
+    created_users = []
 
-    created_tokens = []
-
-    def _create(role: str) -> str:
+    def _create(role: str) -> dict:
         if role == "SUPER_ADMIN":
             login_data = {
-                "email": "api1@gmail.com",
-                "password": "asdqwe123Q",
+                "email": Settings.ADMIN_EMAIL,
+                "password": Settings.ADMIN_PASSWORD,
             }
             response = api.auth.login_user(login_data, expected_status=200)
-            return response.json()["accessToken"]
+            body = response.json()
+            return {
+                "accessToken": body["accessToken"],
+                "roles": body["user"]["roles"],
+                "email": login_data["email"],
+            }
 
+        email = DataGenerator.generate_random_email()
+        password = DataGenerator.generate_random_password()
+        user_data = UserData(
+            email=email,
+            fullName=DataGenerator.generate_random_name(),
+            password=password,
+            passwordRepeat=password,
+            roles=[Roles.USER],
+        )
+        super_admin.api.user_api.create_user(user_data)
 
-        user_data = get_register_payload(roles=[role])
-        api.auth.register_user(user_data)
+        user_response = super_admin.api.user_api.get_user_by_email(email)
+        user_id = user_response.json()["id"]
+        created_users.append(user_id)
+
+        super_admin.api.user_api.patch_user(
+            user_id,
+            {"roles": [role]},
+        )
+
         login = api.auth.login_user({
-            "email": user_data["email"],
-            "password": user_data["password"],
-        })
-        return login.json()["accessToken"]
+            "email": email,
+            "password": password,
+        }, expected_status=200)
+        body = login.json()
 
-    return _create
+        return {
+            "accessToken": body["accessToken"],
+            "roles": body["user"]["roles"],
+            "email": email,
+        }
 
-@pytest.fixture(scope="module")
-def db_session() -> Session:
+    yield _create
 
-    db_session = get_db_session()
-    yield db_session
-    db_session.close()
+    for user_id in created_users:
+        try:
+            super_admin.api.user_api.delete_user(user_id)
+        except Exception as e:
+            logger.warning(
+                f"Cleanup не удался для user_id={user_id}: "
+                f"{type(e).__name__}: {e}"
+            )
+
+@pytest.fixture(scope="function")
+def db_session():
+    session = get_db_session()
+    yield session
+    session.rollback()
 
 
 @pytest.fixture(scope="function")
@@ -200,3 +239,26 @@ def created_test_user(db_helper):
 def delay_between_retries():
     time.sleep(2)
     yield
+
+@pytest.fixture(scope="function")
+def movie_by_super_admin(api, super_admin):
+    with allure.step("Создаём фильм под SUPER_ADMIN"):
+        # SUPER_ADMIN уже логинен в super_admin.api
+        movie_data = DataGenerator.generate_movie_payload()
+        create_response = super_admin.api.movies.create_movie(movie_data)
+        assert create_response.status_code == 201, (
+            f"Не удалось создать фильм: {create_response.status_code} "
+            f"{create_response.text}"
+        )
+        created = MovieResponse.model_validate(create_response.json())
+
+    yield created
+
+    with allure.step("Cleanup: удаляем фильм под SUPER_ADMIN"):
+        try:
+            super_admin.api.movies.delete_movie(created.id)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Cleanup фильма id={created.id} не удался: {e}"
+            )

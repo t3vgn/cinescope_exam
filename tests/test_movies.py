@@ -1,14 +1,11 @@
 import pytest
-import requests
 import allure
-from datetime import datetime
+from models.movies_models import MovieDetails
 from sqlalchemy.orm import Session
 import logging
 
 from models.movies_models import MoviesPage, MovieResponse, MovieCreateRequest, MoviePatchRequest
-from tests.conftest import unauthorized_api
 from utils.data_generator import DataGenerator
-from config.base_urls import API_BASE_URL
 from db_models.movies import MovieDBModel
 
 logger = logging.getLogger(__name__)
@@ -37,24 +34,38 @@ class TestMoviesPositive:
 
         with allure.step("Проверяем, что список фильмов непустой"):
             assert page.movies, "Список фильмов пустой"
-            assert page.page_count >= len(page.movies), "count не может быть меньше размера страницы"
+            assert page.count >= len(page.movies), (
+                f"Общее количество фильмов ({page.count}) "
+                f"не может быть меньше размера страницы ({len(page.movies)})"
+            )
 
     @allure.story("Получение фильма по ID")
     @allure.title("Получение фильма по ID через API")
     @allure.severity(allure.severity_level.NORMAL)
     @pytest.mark.smoke
     def test_get_movie_by_id(self, authorized_api, created_movie):
-        with allure.step(f"Запрашиваем фильм id={created_movie['id']}"):
-            response = authorized_api.movies.get_movie_by_id(created_movie["id"])
+        movie_id = created_movie["id"]
 
-        with allure.step("Проверяем статус"):
-            assert response.status_code == 200
+        with allure.step(f"Запрашиваем фильм id={movie_id}"):
+            response = authorized_api.movies.get_movie_by_id(movie_id)
 
-        with allure.step("Валидируем ответ через MovieResponse"):
-            movie = MovieResponse.model_validate(response.json())
+        with allure.step("Проверяем статус 200"):
+            assert response.status_code == 200, (
+                f"Ожидали 200, получили {response.status_code}: {response.text}"
+            )
+
+        with allure.step("Валидируем ответ через MovieDetails (проверка контракта)"):
+            movie = MovieDetails.model_validate(response.json())
 
         with allure.step("Проверяем, что id совпадает"):
-            assert movie.id == created_movie["id"]
+            assert movie.id == movie_id, (
+                f"Ожидали id={movie_id}, получили id={movie.id}"
+            )
+
+        with allure.step("Проверяем, что reviews — список"):
+            assert isinstance(movie.reviews, list), (
+                f"reviews должен быть списком, получили: {type(movie.reviews).__name__}"
+            )
 
     @allure.story("Создание фильма")
     @allure.title("Создание фильма через API и проверка полей")
@@ -66,7 +77,7 @@ class TestMoviesPositive:
             payload = MovieCreateRequest.model_validate(movie_data)
 
         with allure.step("Создаём фильм через POST /movies"):
-            response = super_admin.api.movies.create_movie(payload.model_dump(mode="json", by_alias=True, exclude_none=True))
+            response = super_admin.api.movies.create_movie(payload)
 
         with allure.step("Проверяем статус 201 и валидируем ответ"):
             assert response.status_code == 201
@@ -89,43 +100,49 @@ class TestMoviesPositive:
     @allure.title("Удаление фильма через API с проверкой в БД")
     @allure.severity(allure.severity_level.CRITICAL)
     @pytest.mark.smoke
-    def test_delete_movie(self, api, super_admin_token, db_session: Session):
-        movie_id = 110
+    def test_delete_movie(self, super_admin, db_session: Session):
 
-        with allure.step(f"Проверяем, есть ли фильм id={movie_id} в БД"):
-            existing = (db_session.query(MovieDBModel).filter(MovieDBModel.id == movie_id).first())
+        with allure.step("Создаём фильм через POST /movies"):
+            movie_data = DataGenerator.generate_movie_payload()
+            response = super_admin.api.movies.create_movie(movie_data)
 
-        if existing is None:
-            with allure.step("Фильма нет — создаём в БД"):
-                db_session.add(MovieDBModel(
-                    id=movie_id,
-                    name="Movie for delete test",
-                    description="Test description",
-                    price=100,
-                    image_url="https://example.com/poster.jpg",
-                    location="SPB",
-                    published=True,
-                    rating=5.0,
-                    genre_id=5,
-                    created_at=datetime.now(),
-                ))
-                db_session.commit()
+        with allure.step("Проверяем статус 201 и валидируем ответ"):
+            assert response.status_code == 201, (
+                f"Ожидали 201, получили {response.status_code}: {response.text}"
+            )
+            created = MovieResponse.model_validate(response.json())
+            movie_id = created.id
 
-        with allure.step("Контрольная проверка: фильм точно в БД"):
+        with allure.step(f"Проверяем в БД, что фильм id={movie_id} существует"):
             db_session.expire_all()
-            assert (db_session.query(MovieDBModel).filter(MovieDBModel.id == movie_id).first()is not None)
+            movie_in_db = (
+                db_session.query(MovieDBModel)
+                .filter(MovieDBModel.id == movie_id)
+                .first()
+            )
+            assert movie_in_db is not None, (
+                f"Фильм id={movie_id} должен существовать в БД после создания"
+            )
 
-        with allure.step(f"Удаляем фильм id={movie_id} через API"):
-            api.set_token(super_admin_token)
-            response = api.movies.delete_movie(movie_id)
+        with allure.step(f"Удаляем фильм id={movie_id} через DELETE /movies/{movie_id}"):
+            delete_response = super_admin.api.movies.delete_movie(movie_id)
 
         with allure.step("Проверяем статус 200"):
-            assert response.status_code == 200
+            assert delete_response.status_code == 200, (
+                f"Ожидали 200, получили {delete_response.status_code}: "
+                f"{delete_response.text}"
+            )
 
-        with allure.step("Проверяем, что фильма нет в БД"):
+        with allure.step(f"Проверяем в БД, что фильм id={movie_id} удалён"):
             db_session.expire_all()
-            assert (
-                db_session.query(MovieDBModel).filter(MovieDBModel.id == movie_id).first()is None)
+            movie_in_db = (
+                db_session.query(MovieDBModel)
+                .filter(MovieDBModel.id == movie_id)
+                .first()
+            )
+            assert movie_in_db is None, (
+                f"Фильм id={movie_id} должен быть удалён из БД"
+            )
 
     # REGRESSION — фильтры и PATCH
 
@@ -219,9 +236,7 @@ class TestMoviesPositive:
 
         with allure.step("Отправляем PATCH"):
             response = authorized_api.movies.patch_movie(
-                created_movie["id"],
-                payload.model_dump(mode="json", by_alias=True, exclude_none=True),
-            )
+                created_movie["id"], payload)
 
         with allure.step("Проверяем статус 200 и валидируем ответ"):
             assert response.status_code == 200
@@ -350,9 +365,7 @@ class TestMoviesNegative:
             movie_data = DataGenerator.generate_movie_payload()
 
         with allure.step("Отправляем POST без токена"):
-            response = unauthorized_api.movies.send_request(
-                "POST", "/movies", data=movie_data, expected_status=401
-            )
+            response = unauthorized_api.movies.create_movie(movie_data, expected_status=401,)
 
         with allure.step("Проверяем статус 401"):
             assert response.status_code == 401
@@ -363,10 +376,7 @@ class TestMoviesNegative:
     @pytest.mark.smoke
     def test_delete_movie_without_auth(self, api, unauthorized_api, created_movie):
         with allure.step("DELETE без токена"):
-            response = unauthorized_api.movies.send_request(
-                "DELETE", f"/movies/{created_movie['id']}",
-                expected_status=401,
-            )
+            response = unauthorized_api.movies.delete_movie(created_movie["id"], expected_status=401,)
 
         with allure.step("Проверяем статус 401"):
             assert response.status_code == 401
@@ -377,30 +387,36 @@ class TestMoviesNegative:
     @pytest.mark.regression
     def test_get_movie_by_nonexistent_id(self, api):
         with allure.step("GET /movies/99999999, ожидаем 404"):
-            api.movies.send_request(
-                "GET", "/movies/99999999", expected_status=404
-            )
+            api.movies.get_movie_by_id(99999999, expected_status=404)
 
     @allure.story("Создание фильма без обязательного поля")
     @allure.title("Создание фильма без 'name' → 400")
     @allure.severity(allure.severity_level.NORMAL)
     @pytest.mark.regression
     def test_create_movie_without_required_field(self, authorized_api):
-        with allure.step("Payload без 'name'"):
+        with allure.step("Получаем валидный genre_id"):
+            valid_genre_id = DataGenerator.get_valid_genre_id()
+
+        with allure.step("Формируем Payload без 'name'"):
             invalid_data = {
                 "price": 500,
                 "description": "No name",
                 "location": "MSK",
                 "published": True,
-                "genreId": 1,
+                "genreId": valid_genre_id,
                 "imageUrl": "https://example.com/img.png",
             }
 
         with allure.step("POST /movies, ожидаем 400"):
-            authorized_api.movies.send_request(
-                "POST", "/movies", data=invalid_data, expected_status=400
-            )
+            response = authorized_api.movies.create_movie(invalid_data, expected_status=400,)
+        with allure.step("Проверяем статус 400"):
+            assert response.status_code == 400
 
+        with allure.step("Проверяем, что ошибка именно про 'name'"):
+            error_text = str(response.json()).lower()
+            assert "name" in error_text, (
+                f"Ожидали ошибку про поле 'name', получили: {response.json()}"
+            )
     @allure.story("Изменение несуществующего фильма")
     @allure.title("PATCH несуществующего фильма → 404")
     @allure.severity(allure.severity_level.NORMAL)
@@ -410,10 +426,7 @@ class TestMoviesNegative:
             patch_data = DataGenerator.generate_movie_patch_data()
 
         with allure.step("PATCH /movies/99999999, ожидаем 404"):
-            authorized_api.movies.send_request(
-                "PATCH", "/movies/99999999",
-                data=patch_data, expected_status=404,
-            )
+            authorized_api.movies.patch_movie(99999999, patch_data, expected_status=404)
 
     @allure.story("Создание фильма обычным пользователем")
     @allure.title("Создание фильма под USER → 403")
@@ -421,11 +434,7 @@ class TestMoviesNegative:
     @pytest.mark.regression
     def test_create_movie_by_common_user(self, common_user):
         with allure.step("POST /movies под USER"):
-            response = common_user.api.movies.send_request(
-                "POST", "/movies",
-                data=DataGenerator.generate_movie_payload(),
-                expected_status=403,
-            )
+            response = common_user.api.movies.create_movie(DataGenerator.generate_movie_payload(),expected_status=403,)
 
         with allure.step("Проверяем статус 403"):
             assert response.status_code == 403
@@ -443,49 +452,35 @@ class TestMoviesDeleteRoles:
     @allure.title("Удаление фильма под разными ролями")
     @allure.severity(allure.severity_level.CRITICAL)
     @pytest.mark.regression
-    @pytest.mark.parametrize("role, expected_status", [
-        ("SUPER_ADMIN", 200),
-        ("ADMIN", 403),
-        ("USER", 403),
+    @pytest.mark.parametrize("user_fixture, role, expected_status", [
+        ("super_admin","SUPER_ADMIN", 200),
+        ("admin_user","ADMIN", 403),
+        ("common_user","USER", 403),
     ])
     def test_delete_movie_by_role(
-        self, api, user_with_role, role, expected_status
+        self, request, movie_by_super_admin,user_fixture, role, expected_status
     ):
-        with allure.step("Создаём фильм под SUPER_ADMIN"):
-            super_admin_token = user_with_role("SUPER_ADMIN")
-            api.set_token(super_admin_token)
-            movie_data = DataGenerator.generate_movie_payload()
-            create_response = api.movies.create_movie(movie_data)
-            assert create_response.status_code == 201
-            movie_id = create_response.json()["id"]
+        allure.dynamic.title(
+            f"Удаление фильма под ролью {role}, ожидаем {expected_status}"
+        )
 
-        with allure.step(f"Меняем токен на роль {role}"):
-            api.session.headers.pop("Authorization", None)
-            token = user_with_role(role)
-            api.set_token(token)
+        movie_id = movie_by_super_admin.id
 
-        with allure.step(f"DELETE под ролью {role}"):
-            delete_response = api.movies.send_request(
-                "DELETE", f"/movies/{movie_id}",
-                expected_status=expected_status,
+        with allure.step(f"Получаем пользователя: {user_fixture}"):
+            user = request.getfixturevalue(user_fixture)
+
+        with allure.step(f"DELETE /movies/{movie_id} под ролью {role}"):
+            delete_response = user.api.movies.delete_movie(
+                movie_id, expected_status=expected_status
             )
 
         with allure.step(f"Проверяем статус {expected_status}"):
             assert delete_response.status_code == expected_status
 
         if expected_status == 200:
-            with allure.step("Фильм удалён — проверяем 404"):
-                get_response = requests.get(f"{API_BASE_URL}/movies/{movie_id}")
-                assert get_response.status_code == 404
+            with allure.step("Фильм удалён — проверяем 404 через API"):
+                user.api.movies.get_movie_by_id(movie_id, expected_status=404)
         else:
             with allure.step(f"Роль {role} — фильм на месте"):
-                get_response = requests.get(f"{API_BASE_URL}/movies/{movie_id}")
-                assert get_response.status_code == 200
+                user.api.movies.get_movie_by_id(movie_id, expected_status=200)
 
-        with allure.step("Cleanup: удаляем под SUPER_ADMIN"):
-            api.session.headers.pop("Authorization", None)
-            api.set_token(super_admin_token)
-            try:
-                api.movies.delete_movie(movie_id)
-            except Exception as e:
-                logger.warning(f"Cleanup не удался для movie_id={movie_id}: {e}")
