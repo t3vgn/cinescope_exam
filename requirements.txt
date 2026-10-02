@@ -2,3 +2,9 @@ requests
 pytest
 Faker
 dotenv
+pydantic
+sqlalchemy
+allure-pytest
+pytest-check
+pytest-rerunfailures
+psycopg2-binary
