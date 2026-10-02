@@ -28,11 +28,17 @@ class MovieResponse(BaseModel):
     created_at: datetime = Field(..., alias="createdAt")
     genre: GenreResponse
 
+class UserResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    id: str
+    full_name: str = Field(..., alias="fullName")
 
 class ReviewResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    id: int
+    user_id: str = Field(..., alias="userId")
+    user: UserResponse
     rating: int = Field(..., ge=0, le=5)
     text: str
     created_at: datetime = Field(..., alias="createdAt")
@@ -41,7 +47,7 @@ class ReviewResponse(BaseModel):
 class MovieDetails(MovieResponse):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    reviews: list[ReviewResponse] = []
+    reviews: list[ReviewResponse]
 
 
 class MoviesPage(BaseModel):

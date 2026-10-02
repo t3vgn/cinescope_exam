@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from constants.roles import Roles
 
 logger = logging.getLogger(__name__)
-class UserDataModel:
+class TestUserModel:
 
     def test_create_user(self, super_admin, creation_user_data):
         response = super_admin.api.user_api.create_user(creation_user_data)
