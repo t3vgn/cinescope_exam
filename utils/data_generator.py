@@ -1,6 +1,8 @@
 # utils/data_generator.py
 import re
 import uuid
+from random import randint
+
 import requests
 from faker import Faker
 
@@ -8,7 +10,6 @@ faker = Faker("ru_RU")
 
 
 class DataGenerator:
-
     @staticmethod
     def generate_random_email() -> str:
         return f"user.{uuid.uuid4().hex[:8]}@mail.ru"
@@ -22,7 +23,28 @@ class DataGenerator:
 
     @staticmethod
     def generate_random_password() -> str:
-        return "Test1234!"
+        return "Test1234@"
+
+    @classmethod
+    def generate_user_data(cls) -> dict:
+        """Данные для регистрации — через существующие генераторы."""
+        return {
+            "full_name": cls.generate_random_name(),
+            "email": cls.generate_random_email(),
+            "password": cls.generate_random_password(),
+        }
+
+    # ============================================================
+    # Специфичные для UI-тестов
+    # ============================================================
+
+    @staticmethod
+    def generate_review_text() -> str:
+        return f"Отличный фильм! Смотрели всей семьей. Отзыв #{randint(1, 9999)}"
+
+    # ============================================================
+    # Специфичные для API-тестов
+    # ============================================================
 
     @staticmethod
     def get_valid_genre_id() -> int:

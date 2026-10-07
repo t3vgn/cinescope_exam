@@ -1,3 +1,4 @@
+#test_auth.py
 import pytest
 from data.auth.register_data import get_register_payload
 

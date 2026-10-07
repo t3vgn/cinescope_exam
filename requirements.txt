@@ -1,4 +1,7 @@
 requests
 pytest
 Faker
-dotenv
+python-dotenv
+playwright
+pytest-playwright
+allure-pytest
