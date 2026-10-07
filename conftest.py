@@ -11,7 +11,7 @@ DEFAULT_UI_TIMEOUT = 30000
 
 @pytest.fixture(scope="session")  # Браузер запускается один раз для всей сессии
 def browser(playwright):
-    browser = playwright.chromium.launch(headless=False, slow_mo=500)  # headless=True для CI/CD, headless=False для локальной разработки
+    browser = playwright.chromium.launch()  # headless=True для CI/CD, headless=False для локальной разработки
     yield browser  # yield возвращает значение фикстуры, выполнение теста продолжится после yield
     browser.close()  # Браузер закрывается после завершения всех тестов
 
@@ -56,11 +56,12 @@ def movie_page(page: Page) -> CinescopeMoviePage:
     return CinescopeMoviePage(page)
 
 @pytest.fixture
-def registered_user(register_page) -> dict:
+def registered_user(api) -> dict:
     user_data = DataGenerator.generate_user_data()
-    register_page.register(
-        user_data["full_name"],
-        user_data["email"],
-        user_data["password"],
-    )
+    api.auth.register_user({
+        "fullName": user_data["full_name"],
+        "email": user_data["email"],
+        "password": user_data["password"],
+        "passwordRepeat": user_data["password"],
+    })
     return user_data

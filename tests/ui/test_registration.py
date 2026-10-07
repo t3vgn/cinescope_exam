@@ -1,3 +1,4 @@
+#test_registration.py
 import allure
 import pytest
 

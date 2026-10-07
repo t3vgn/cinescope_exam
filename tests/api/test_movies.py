@@ -1,6 +1,6 @@
+#test_movies.py
 import pytest
 
-from tests.conftest import unauthorized_api
 from utils.data_generator import DataGenerator
 
 

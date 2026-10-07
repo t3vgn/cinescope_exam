@@ -10,39 +10,6 @@ faker = Faker("ru_RU")
 
 
 class DataGenerator:
-
-    # ============================================================
-    # UI-тесты (exam_module_7)
-    # ============================================================
-
-    @staticmethod
-    def generate_email() -> str:
-        return f"aqatest{randint(1, 999999)}@email.qa"
-
-    @staticmethod
-    def generate_full_name() -> str:
-        return "Иван Иванов"
-
-    @staticmethod
-    def generate_password() -> str:
-        return "qwerty123Q"
-
-    @staticmethod
-    def generate_review_text() -> str:
-        return f"Отличный фильм! Смотрели всей семьей. Отзыв #{randint(1, 9999)}"
-
-    @classmethod
-    def generate_user_data(cls) -> dict:
-        return {
-            "full_name": cls.generate_full_name(),
-            "email": cls.generate_email(),
-            "password": cls.generate_password(),
-        }
-
-    # ============================================================
-    # API-тесты (main)
-    # ============================================================
-
     @staticmethod
     def generate_random_email() -> str:
         return f"user.{uuid.uuid4().hex[:8]}@mail.ru"
@@ -56,7 +23,28 @@ class DataGenerator:
 
     @staticmethod
     def generate_random_password() -> str:
-        return "Test1234!"
+        return "Test1234@"
+
+    @classmethod
+    def generate_user_data(cls) -> dict:
+        """Данные для регистрации — через существующие генераторы."""
+        return {
+            "full_name": cls.generate_random_name(),
+            "email": cls.generate_random_email(),
+            "password": cls.generate_random_password(),
+        }
+
+    # ============================================================
+    # Специфичные для UI-тестов
+    # ============================================================
+
+    @staticmethod
+    def generate_review_text() -> str:
+        return f"Отличный фильм! Смотрели всей семьей. Отзыв #{randint(1, 9999)}"
+
+    # ============================================================
+    # Специфичные для API-тестов
+    # ============================================================
 
     @staticmethod
     def get_valid_genre_id() -> int:

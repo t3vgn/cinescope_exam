@@ -12,7 +12,9 @@ class PageAction:
 
     @allure.step("Ввод текста в поле: {locator}")
     def enter_text(self, locator: str, text: str):
-        self.page.fill(locator, text)
+        element = self.page.locator(locator)
+        element.click()  # фокус
+        element.press_sequentially(text, delay=30)
 
     @allure.step("Клик по элементу: {locator}")
     def click(self, locator: str):

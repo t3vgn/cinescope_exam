@@ -1,5 +1,7 @@
+# tests/api/conftest.py
 import pytest
 import requests
+
 from clients.api_manager import ApiManager
 from utils.data_generator import DataGenerator
 from config.settings import Settings
@@ -30,7 +32,6 @@ def super_admin_token(api):
 def authorized_api(api, super_admin_token):
     api.set_token(super_admin_token)
     yield api
-    # Очистка: убираем токен после теста
     api.session.headers.pop("Authorization", None)
 
 
